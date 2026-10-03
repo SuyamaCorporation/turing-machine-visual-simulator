@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Turing Machine Visual Simulator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0f172a; }
+  .tape-cell {
+    width: 48px; min-width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid #334155; font-size: 18px; font-weight: bold;
+    font-family: monospace; transition: background 0.2s, border-color 0.2s;
+    border-radius: 4px; flex-shrink: 0;
+    background: #1e293b; color: #e2e8f0;
+  }
+  .tape-cell.active { background: #7c3aed; border-color: #a78bfa; color: #fff; }
+  .tape-cell.written { background: #065f46; border-color: #34d399; }
+  #tapeTrack {
+    display: flex; gap: 4px;
+    transition: transform 0.2s;
+  }
+  #tapeScroller { overflow: hidden; position: relative; }
+  .state-row.active-state { background: #7c3aed55 !important; }
+  .state-row.fired-rule { background: #065f4655 !important; }
+</style>
+</head>
+<body class="text-slate-200 min-h-screen p-4">
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold text-center mb-4 text-violet-400">Turing Machine Visual Simulator</h1>
+
+  <!-- Presets -->
+  <div class="flex flex-wrap gap-2 justify-center mb-4">
+    <span class="text-sm text-slate-400 self-center">Presets:</span>
+    <button onclick="loadPreset('increment')" class="bg-slate-700 hover:bg-violet-700 text-xs rounded px-3 py-1.5 transition">Binary Increment</button>
+    <button onclick="loadPreset('unary')" class="bg-slate-700 hover:bg-violet-700 text-xs rounded px-3 py-1.5 transition">Unary Adder</button>
+    <button onclick="loadPreset('palindrome')" class="bg-slate-700 hover:bg-violet-700 text-xs rounded px-3 py-1.5 transition">Palindrome Check</button>
+    <button onclick="loadPreset('copy')" class="bg-slate-700 hover:bg-violet-700 text-xs rounded px-3 py-1.5 transition">Copy Machine</button>
+  </div>
+
+  <!-- Tape Visualization -->
+  <div class="bg-slate-800 rounded-xl p-4 mb-4">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-sm font-semibold text-slate-300">Tape</span>
+      <div id="headIndicator" class="text-violet-400 font-bold text-lg" aria-label="Tape head position">▼</div>
+      <span id="headPos" class="text-xs text-slate-400 font-mono">pos: 0</span>
+    </div>
+    <div id="tapeScroller" class="rounded-lg p-2 bg-slate-900 overflow-hidden" style="height:64px">
+      <div id="tapeTrack" class="items-center" style="height:52px"></div>
+    </div>
+  </div>
+
+  <div class="flex flex-col lg:flex-row gap-4">
+    <!-- Left: Controls + Initial Tape -->
+    <div class="flex-1 bg-slate-800 rounded-xl p-4 space-y-4">
+      <!-- Status bar -->
+      <div class="flex flex-wrap gap-3 items-center">
+        <div class="bg-slate-900 rounded-lg px-3 py-1.5">
+          <span class="text-xs text-slate-400">State: </span>
+          <span id="stateDisplay" class="font-mono font-bold text-violet-300">q0</span>
+        </div>
+        <div class="bg-slate-900 rounded-lg px-3 py-1.5">
+          <span class="text-xs text-slate-400">Steps: </span>
+          <span id="stepCount" class="font-mono font-bold text-cyan-300">0</span>
+        </div>
+        <div id="statusBadge" class="rounded-full px-3 py-1 text-xs font-bold bg-green-900 text-green-300">READY</div>
+      </div>
+
+      <!-- Initial tape input -->
+      <div>
+        <label for="tapeInput" class="text-sm text-slate-300 block mb-1">Initial Tape (blank=_):</label>
+        <div class="flex gap-2">
+          <input id="tapeInput" type="text" value="1011" placeholder="e.g. 1011"
+            class="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono"
+            aria-label="Initial tape content">
+          <button onclick="resetMachine()" class="bg-slate-600 hover:bg-slate-500 text-sm rounded px-3 py-1 transition">Load</button>
+        </div>
+      </div>
+
+      <!-- Playback controls -->
+      <div>
+        <div class="flex gap-2 mb-2">
+          <button id="runBtn" onclick="toggleRun()" class="flex-1 bg-violet-700 hover:bg-violet-600 text-sm rounded px-3 py-2 transition font-medium">Run</button>
+          <button onclick="stepMachine()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-sm rounded px-3 py-2 transition">Step</button>
+          <button onclick="resetMachine()" class="flex-1 bg-red-900 hover:bg-red-700 text-sm rounded px-3 py-2 transition">Reset</button>
+        </div>
+        <label class="text-xs text-slate-400 block mb-1">Speed: <span id="speedLabel" class="text-violet-300">5</span> steps/s</label>
+        <input id="speedSlider" type="range" min="1" max="20" value="5" class="w-full accent-violet-500" aria-label="Speed" oninput="updateSpeed()">
+      </div>
+
+      <!-- Start/Halt states -->
+      <div class="flex gap-3">
+        <div class="flex-1">
+          <label class="text-xs text-slate-400 block mb-1">Start State:</label>
+          <input id="startState" type="text" value="q0" class="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono" aria-label="Start state">
+        </div>
+        <div class="flex-1">
+          <label class="text-xs text-slate-400 block mb-1">Halt State:</label>
+          <input id="haltState" type="text" value="HALT" class="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono" aria-label="Halt state">
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Transition Table -->
+    <div class="flex-1 bg-slate-800 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-slate-300">Transition Table</h2>
+        <button onclick="addRule()" class="bg-slate-700 hover:bg-green-700 text-xs rounded px-2 py-1 transition">+ Add Rule</button>
+      </div>
+
+      <div class="overflow-auto" style="max-height:280px">
+        <table class="w-full text-xs" id="ruleTable">
+          <thead>
+            <tr class="text-slate-400 border-b border-slate-600">
+              <th class="text-left py-1 px-1">State</th>
+              <th class="text-left py-1 px-1">Read</th>
+              <th class="text-left py-1 px-1">Write</th>
+              <th class="text-left py-1 px-1">Dir</th>
+              <th class="text-left py-1 px-1">Next</th>
+              <th class="py-1 px-1"></th>
+            </tr>
+          </thead>
+          <tbody id="ruleBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- Machine state ----
+const TAPE_SIZE = 200;
+let tape = [];
+let head = 0;
+let currentState = 'q0';
+let steps = 0;
+let running = false;
+let runInterval = null;
+let speed = 5;
+let lastFiredRule = null;
+let rules = []; // {state, read, write, dir, next}
+
+// ---- Presets ----
+const PRESETS = {
+  increment: {
+    tape: '1011',
+    start: 'q0',
+    halt: 'HALT',
+    rules: [
+      {state:'q0',read:'0',write:'0',dir:'R',next:'q0'},
+      {state:'q0',read:'1',write:'1',dir:'R',next:'q0'},
+      {state:'q0',read:'_',write:'_',dir:'L',next:'q1'},
+      {state:'q1',read:'1',write:'0',dir:'L',next:'q1'},
+      {state:'q1',read:'0',write:'1',dir:'R',next:'HALT'},
+      {state:'q1',read:'_',write:'1',dir:'R',next:'HALT'},
+    ]
+  },
+  unary: {
+    tape: '111_11',
+    start: 'q0',
+    halt: 'HALT',
+    rules: [
+      {state:'q0',read:'1',write:'1',dir:'R',next:'q0'},
+      {state:'q0',read:'_',write:'1',dir:'R',next:'q1'},
+      {state:'q1',read:'1',write:'1',dir:'R',next:'q1'},
+      {state:'q1',read:'_',write:'_',dir:'L',next:'q2'},
+      {state:'q2',read:'1',write:'_',dir:'L',next:'HALT'},
+    ]
+  },
+  palindrome: {
+    tape: '10101',
+    start: 'q0',
+    halt: 'HALT',
+    rules: [
+      {state:'q0',read:'0',write:'_',dir:'R',next:'q1'},
+      {state:'q0',read:'1',write:'_',dir:'R',next:'q3'},
+      {state:'q0',read:'_',write:'_',dir:'R',next:'HALT'},
+      {state:'q1',read:'0',write:'0',dir:'R',next:'q1'},
+      {state:'q1',read:'1',write:'1',dir:'R',next:'q1'},
+      {state:'q1',read:'_',write:'_',dir:'L',next:'q2'},
+      {state:'q2',read:'0',write:'_',dir:'L',next:'q5'},
+      {state:'q2',read:'1',write:'1',dir:'L',next:'HALT'},
+      {state:'q3',read:'0',write:'0',dir:'R',next:'q3'},
+      {state:'q3',read:'1',write:'1',dir:'R',next:'q3'},
+      {state:'q3',read:'_',write:'_',dir:'L',next:'q4'},
+      {state:'q4',read:'1',write:'_',dir:'L',next:'q5'},
+      {state:'q4',read:'0',write:'0',dir:'L',next:'HALT'},
+      {state:'q5',read:'0',write:'0',dir:'L',next:'q5'},
+      {state:'q5',read:'1',write:'1',dir:'L',next:'q5'},
+      {state:'q5',read:'_',write:'_',dir:'R',next:'q0'},
+    ]
+  },
+  copy: {
+    tape: '111',
+    start: 'q0',
+    halt: 'HALT',
+    rules: [
+      {state:'q0',read:'1',write:'_',dir:'R',next:'q1'},
+      {state:'q0',read:'_',write:'_',dir:'R',next:'HALT'},
+      {state:'q1',read:'1',write:'1',dir:'R',next:'q1'},
+      {state:'q1',read:'_',write:'1',dir:'R',next:'q2'},
+      {state:'q2',read:'1',write:'1',dir:'R',next:'q2'},
+      {state:'q2',read:'_',write:'_',dir:'L',next:'q3'},
+      {state:'q3',read:'1',write:'1',dir:'L',next:'q3'},
+      {state:'q3',read:'_',write:'_',dir:'L',next:'q4'},
+      {state:'q4',read:'1',write:'1',dir:'L',next:'q4'},
+      {state:'q4',read:'_',write:'_',dir:'R',next:'q0'},
+    ]
+  }
+};
+
+function loadPreset(name) {
+  const p = PRESETS[name];
+  rules = p.rules.map(r => ({ ...r }));
+  document.getElementById('tapeInput').value = p.tape;
+  document.getElementById('startState').value = p.start;
+  document.getElementById('haltState').value = p.halt;
+  renderRuleTable();
+  resetMachine();
+}
+
+// ---- Tape management ----
+function initTape(input) {
+  tape = new Array(TAPE_SIZE).fill('_');
+  // Center initial input
+  const offset = Math.floor(TAPE_SIZE / 2);
+  for (let i = 0; i < input.length && i < TAPE_SIZE; i++) {
+    tape[offset + i] = input[i];
+  }
+  head = offset;
+}
+
+function renderTape() {
+  const track = document.getElementById('tapeTrack');
+  track.innerHTML = '';
+  const visStart = Math.max(0, head - 8);
+  const visEnd = Math.min(TAPE_SIZE - 1, head + 8);
+
+  for (let i = visStart; i <= visEnd; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'tape-cell';
+    if (i === head) cell.classList.add('active');
+    const sym = document.createTextNode(tape[i]);
+    cell.appendChild(sym);
+    track.appendChild(cell);
+  }
+
+  document.getElementById('headPos').textContent = `pos: ${head - Math.floor(TAPE_SIZE / 2)}`;
+}
+
+function updateSpeed() {
+  speed = parseInt(document.getElementById('speedSlider').value);
+  document.getElementById('speedLabel').textContent = speed;
+  if (running) {
+    clearInterval(runInterval);
+    runInterval = setInterval(stepMachine, Math.floor(1000 / speed));
+  }
+}
+
+// ---- Rule table rendering ----
+function renderRuleTable() {
+  const tbody = document.getElementById('ruleBody');
+  tbody.innerHTML = '';
+  rules.forEach((rule, i) => {
+    const tr = document.createElement('tr');
+    tr.className = 'state-row border-b border-slate-700 hover:bg-slate-700';
+    tr.dataset.idx = i;
+    if (rule === lastFiredRule) tr.classList.add('fired-rule');
+
+    // Highlight if current state matches
+    if (currentState === rule.state) tr.classList.add('active-state');
+
+    ['state','read','write','dir','next'].forEach(field => {
+      const td = document.createElement('td');
+      td.className = 'py-1 px-1';
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.value = rule[field];
+      inp.className = 'w-12 bg-slate-700 border border-slate-600 rounded px-1 py-0.5 font-mono text-xs';
+      inp.setAttribute('aria-label', `${field} for rule ${i + 1}`);
+      if (field === 'dir') {
+        inp.maxLength = 1;
+        inp.style.width = '36px';
+      }
+      inp.addEventListener('input', () => {
+        let v = inp.value;
+        if (field === 'dir') v = v.toUpperCase().replace(/[^LR]/g, '').slice(0, 1);
+        rules[i][field] = v;
+      });
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+
+    const td = document.createElement('td');
+    td.className = 'py-1 px-1';
+    const btn = document.createElement('button');
+    btn.textContent = '✕';
+    btn.className = 'text-red-400 hover:text-red-300 text-xs';
+    btn.setAttribute('aria-label', `Delete rule ${i + 1}`);
+    btn.addEventListener('click', () => { rules.splice(i, 1); renderRuleTable(); });
+    td.appendChild(btn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  });
+}
+
+function addRule() {
+  rules.push({ state: 'q0', read: '0', write: '0', dir: 'R', next: 'HALT' });
+  renderRuleTable();
+}
+
+// ---- Machine execution ----
+function findRule(state, symbol) {
+  return rules.find(r => r.state === state && r.read === symbol) || null;
+}
+
+function stepMachine() {
+  const haltState = document.getElementById('haltState').value.trim();
+  if (currentState === haltState) {
+    setStatus('HALT', 'bg-red-900 text-red-300');
+    stopRun();
+    return;
+  }
+
+  const sym = tape[head] || '_';
+  const rule = findRule(currentState, sym);
+
+  if (!rule) {
+    // No rule found → halt with error
+    setStatus('NO RULE', 'bg-orange-900 text-orange-300');
+    stopRun();
+    addStatusNote(`No rule for state=${currentState}, read=${sym}`);
+    return;
+  }
+
+  lastFiredRule = rule;
+  tape[head] = rule.write;
+  currentState = rule.next;
+  if (rule.dir === 'L') head = Math.max(0, head - 1);
+  else if (rule.dir === 'R') head = Math.min(TAPE_SIZE - 1, head + 1);
+
+  steps++;
+  document.getElementById('stepCount').textContent = steps;
+  document.getElementById('stateDisplay').textContent = currentState;
+
+  if (currentState === haltState) {
+    setStatus('HALT', 'bg-red-900 text-red-300');
+    stopRun();
+  } else {
+    setStatus('RUNNING', 'bg-green-900 text-green-300');
+  }
+
+  renderTape();
+  renderRuleTable(); // highlight active rule
+}
+
+function toggleRun() {
+  if (running) {
+    stopRun();
+  } else {
+    running = true;
+    document.getElementById('runBtn').textContent = 'Pause';
+    document.getElementById('runBtn').className = 'flex-1 bg-yellow-700 hover:bg-yellow-600 text-sm rounded px-3 py-2 transition font-medium';
+    setStatus('RUNNING', 'bg-green-900 text-green-300');
+    runInterval = setInterval(stepMachine, Math.floor(1000 / speed));
+  }
+}
+
+function stopRun() {
+  running = false;
+  clearInterval(runInterval);
+  document.getElementById('runBtn').textContent = 'Run';
+  document.getElementById('runBtn').className = 'flex-1 bg-violet-700 hover:bg-violet-600 text-sm rounded px-3 py-2 transition font-medium';
+}
+
+function resetMachine() {
+  stopRun();
+  const input = document.getElementById('tapeInput').value || '';
+  const sanitized = input.replace(/[^01_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ]/g, '').slice(0, 50);
+  initTape(sanitized || '_');
+  currentState = document.getElementById('startState').value.trim() || 'q0';
+  steps = 0;
+  lastFiredRule = null;
+  document.getElementById('stepCount').textContent = '0';
+  document.getElementById('stateDisplay').textContent = currentState;
+  setStatus('READY', 'bg-green-900 text-green-300');
+  renderTape();
+  renderRuleTable();
+  const note = document.getElementById('statusNote');
+  if (note) note.remove();
+}
+
+function setStatus(text, classes) {
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = text;
+  badge.className = 'rounded-full px-3 py-1 text-xs font-bold ' + classes;
+}
+
+function addStatusNote(text) {
+  let note = document.getElementById('statusNote');
+  if (!note) {
+    note = document.createElement('div');
+    note.id = 'statusNote';
+    note.className = 'text-xs text-orange-300 mt-2';
+    document.getElementById('statusBadge').parentElement.appendChild(note);
+  }
+  note.textContent = text;
+}
+
+// Load default preset on startup
+loadPreset('increment');
+</script>
+</body>
+</html>
